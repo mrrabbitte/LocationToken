@@ -3,13 +3,14 @@ import time
 import traceback
 from dataclasses import dataclass
 
-from cryptography.hazmat.primitives import serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import ec
+from eth_account import Account
+from eth_account.messages import encode_defunct
+from eth_keys import keys
 from result import Result, Err, Ok
 
 from contract.register import LocationTokenRegister
-from proof.hashes import hash_challenge_input_data, hash_challenge, hash_pub_key, hash_c_signature, hash_signatures
-from proof.keys import KeysHolder
+from proof.hashes import hash_challenge_input_data, hash_challenge, hash_pub_key, hash_signatures, hash_c_signature
+from proof.keys import KeysHolder, from_hex
 from proof.proof import ProofOfLocation
 
 
@@ -22,9 +23,9 @@ class ChallengeInput:
 
 @dataclass
 class Challenge:
-    # the challenge by design has a steep TTL, hence the traveller needs to verify the challenge locally so pub_key
+    # the challenge by design has a steep TTL, hence the traveller needs to verify the challenge locally so checksum
     # is provided
-    challenger_pub_key: str
+    challenger_checksum: str
     traveller_id: str
     challenger_id: str
     nonce_c: str  # 256 random bytes from secure source
@@ -60,8 +61,8 @@ class Challenger:
         if ver_result.is_err():
             return Err(ver_result.unwrap_err())
 
-        # challenger pub key
-        challenger_pub_key = self.keys_holder.pub_key_raw
+        # challenger checksum
+        challenger_checksum = self.keys_holder.checksum_address
 
         # Assigning local vars here for visibility
         traveller_id = challenge_input.traveller_id
@@ -70,20 +71,18 @@ class Challenger:
         nonce_c = self.generate_nonce()
         ttl = self.ttl
 
-        c_signature = self.keys_holder.priv_key.sign(
-            bytes.fromhex(hash_challenge(traveller_id, challenger_id, nonce_c, created_at, ttl)),
-            ec.ECDSA(hashes.SHA512())).hex()
+        eth_message = encode_defunct(hash_challenge(traveller_id, challenger_id, nonce_c, created_at, ttl))
+        c_signature = Account.sign_message(eth_message, private_key=self.keys_holder.priv_key.to_hex()).signature.hex()
 
-        return Ok(Challenge(challenger_pub_key, traveller_id, challenger_id, nonce_c, created_at, ttl, c_signature))
+        return Ok(Challenge(challenger_checksum, traveller_id, challenger_id, nonce_c, created_at, ttl, c_signature))
 
     def handle_solution(self, solution: ChallengeSolution) -> Result[ProofOfLocation, str]:
         result = self.verify_solution(solution)
         if result.is_err():
             return Err(result.unwrap_err())
 
-        proof = self.keys_holder.priv_key.sign(
-            bytes.fromhex(hash_signatures(solution.c_signature, solution.t_signature)),
-            ec.ECDSA(hashes.SHA512())).hex()
+        eth_message = encode_defunct(hash_signatures(solution.c_signature, solution.t_signature))
+        proof = Account.sign_message(eth_message, private_key=self.keys_holder.priv_key.to_hex()).signature.hex()
 
         return Ok(ProofOfLocation(
             solution.traveller_id,
@@ -98,23 +97,33 @@ class Challenger:
 
     def verify_solution(self, solution: ChallengeSolution) -> Result[None, str]:
         print(f"Verifying solution: {solution} ...")
+
         arrived_at = self.now_millis()
 
         try:
-            self.keys_holder.pub_key.verify(
-                bytes.fromhex(solution.c_signature),
-                bytes.fromhex(hash_challenge(solution.traveller_id,
-                                             solution.challenger_id,
-                                             solution.nonce_c,
-                                             solution.created_at,
-                                             solution.ttl)),
-                ec.ECDSA(hashes.SHA512()))
+            c_signature_data = encode_defunct(hash_challenge(solution.traveller_id,
+                                                             solution.challenger_id,
+                                                             solution.nonce_c,
+                                                             solution.created_at,
+                                                             solution.ttl))
+            recovered_challenger = Account.recover_message(c_signature_data,
+                                                           signature=from_hex(solution.c_signature))
+            if recovered_challenger.lower() != self.keys_holder.checksum_address.lower():
+                return Err(
+                    f"Challenger verification failed - "
+                    f"recovered: {recovered_challenger}, "
+                    f"actual: {self.keys_holder.checksum_address} ")
 
             print(f"[✓] Verified c_signature: {solution.c_signature}")
 
             took = arrived_at - solution.created_at
             if took > solution.ttl:
                 print(f"[X] Solution is outdated, took: {took} with ttl of {solution.ttl}")
+                return Err(
+                    f"Solution is outdated, "
+                    f"arrived_at: {arrived_at}, "
+                    f"created_at: {solution.created_at}, "
+                    f"ttl: {solution.ttl}")
 
             print(f"[✓] Verified solution is up to date: {solution.c_signature}")
 
@@ -126,10 +135,15 @@ class Challenger:
 
             traveller_pub_key = traveller_pub_key.unwrap()
 
-            serialization.load_pem_public_key(traveller_pub_key.encode()).verify(
-                bytes.fromhex(solution.t_signature),
-                bytes.fromhex(hash_c_signature(solution.c_signature)),
-                ec.ECDSA(hashes.SHA512()))
+            traveller_checksum = keys.PublicKey(from_hex(traveller_pub_key)).to_checksum_address()
+            t_signature_data = encode_defunct(hash_c_signature(solution.c_signature))
+            recovered_traveller = Account.recover_message(t_signature_data,
+                                                          signature=from_hex(solution.t_signature))
+            if recovered_traveller != traveller_checksum:
+                return Err(
+                    f"Could not verify the traveller signature, "
+                    f"recovered: {traveller_checksum} actual: {recovered_traveller}")
+
             print(f"[✓] Verified t_signature: {solution.t_signature}")
 
             return Ok(None)
@@ -148,13 +162,18 @@ class Challenger:
             return Err(traveller_pub_key.err())
 
         traveller_pub_key = traveller_pub_key.unwrap()
+        traveller_checksum = keys.PublicKey(from_hex(traveller_pub_key)).to_checksum_address()
         try:
-            serialization.load_pem_public_key(
-                traveller_pub_key.encode()).verify(
-                bytes.fromhex(challenge_input.request_signature),
-                bytes.fromhex(hash_challenge_input_data(challenge_input.traveller_id, challenge_input.nonce_t)),
-                ec.ECDSA(hashes.SHA512()))
+            challenge_input_data = encode_defunct(
+                hash_challenge_input_data(challenge_input.traveller_id, challenge_input.nonce_t))
+            recovered_traveller = Account.recover_message(challenge_input_data,
+                                                          signature=from_hex(challenge_input.request_signature))
+            if recovered_traveller != traveller_checksum:
+                return Err(
+                    f"Could not verify the request, recovered: {recovered_traveller}, actual: {traveller_checksum}")
+
             print(f"[✓] Verified signature: {challenge_input}")
+
             return Ok(None)
         except Exception as e:
             traceback.print_exc()

@@ -6,14 +6,13 @@ from web3.auto import w3
 from client.challenge import TravellerKeys, request_challenge, solve, send_solution
 from contract.register import LocationTokenRegister
 
-conf = dotenv_values()
-dao_address = conf["DAO_ADDRESS"]
-register = LocationTokenRegister(dao_address,
-                                 "/home/mrrabbit/Code/python/LocationToken/contract/LocationToken.abi.json",
-                                 conf["NODE_ADDRESS"])
-keys = TravellerKeys(conf['TRAVELLER_PUB_KEY'], conf['TRAVELLER_PRIV_KEY'])
-
 if __name__ == "__main__":
+    conf = dotenv_values()
+    dao_address = conf["DAO_ADDRESS"]
+    register = LocationTokenRegister(dao_address,
+                                     "/home/mrrabbit/Code/python/LocationToken/contract/LocationToken.abi.json",
+                                     conf["NODE_ADDRESS"])
+    keys = TravellerKeys(conf['TRAVELLER_PUB_KEY'], conf['TRAVELLER_PRIV_KEY'])
     traveller_address = conf['TRAVELLER_ADDRESS']
 
     print("Requesting challenge... ")

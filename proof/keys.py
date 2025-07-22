@@ -1,33 +1,35 @@
+import secrets
 from typing import Tuple
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from eth_keys import keys
 
 
 class KeysHolder:
 
     def __init__(self, pub_key: str, priv_key: str):
         self.pub_key_raw = pub_key
-        self.pub_key = serialization.load_pem_public_key(pub_key.encode())
-        self.priv_key = serialization.load_pem_private_key(priv_key.encode(), password=None)
+        self.pub_key = keys.PublicKey(from_hex(pub_key))
+        self.priv_key = keys.PrivateKey(from_hex(priv_key))
+        self.checksum_address = self.pub_key.to_checksum_address()
 
 
-def __generate_keys() -> Tuple[str, str]:
-    private_key = ec.generate_private_key(ec.SECP256K1())
-    public_key = private_key.public_key()
+def from_hex(b: str) -> bytes:
+    return bytes.fromhex(b.replace("0x", ""))
 
-    return (
-        private_key.private_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PrivateFormat.TraditionalOpenSSL,
-            encryption_algorithm=serialization.NoEncryption()
-        ).decode(),
-        public_key.public_bytes(
-            encoding=serialization.Encoding.PEM,
-            format=serialization.PublicFormat.SubjectPublicKeyInfo).decode())
+
+def __generate_keys() -> Tuple[str, str, str]:
+    private_key_bytes = secrets.token_bytes(32)
+    private_key = keys.PrivateKey(private_key_bytes)
+    public_key = private_key.public_key
+    address = public_key.to_checksum_address()
+
+    return private_key.to_hex(), public_key.to_hex(), address
 
 
 if __name__ == "__main__":
-    priv, pub = __generate_keys()
+    priv, pub, checksum = __generate_keys()
     print(priv)
     print(pub)
+    print(checksum)
+
+    assert keys.PrivateKey(from_hex(priv.replace("0x", ""))).to_hex() == priv

@@ -15,8 +15,8 @@ contract LocationToken {
 
     struct Challenger {
         string id;
-        address challengerAddress;
         bytes pubKey;
+        bytes checksum;
         string wifiNetwork;
         Location location;
         bool isBlocklisted;
@@ -25,13 +25,14 @@ contract LocationToken {
 
     struct Traveller {
         string id;
-        address travellerAddress;
         bytes pubKey;
+        bytes checksum;
         bool isBlocklisted;
         bool exists;
     }
 
     struct ProofOfLocation {
+        uint256 fastId;
         string travellerId;
         string challengerId;
         string nonce_c;
@@ -109,8 +110,9 @@ contract LocationToken {
     }
 
     function registerChallenger(
-        bytes memory challengerPubKey,
         string memory challengerId,
+        bytes memory challengerPubKey,
+        bytes memory challengerChecksum,
         string memory wifiNetwork,
         uint32 scaleLat,
         uint64 lat,
@@ -126,8 +128,8 @@ contract LocationToken {
 
         challengers[internalId] = Challenger(
             challengerId,
-            msg.sender,
             challengerPubKey,
+            challengerChecksum,
             wifiNetwork,
             location,
             false,
@@ -140,7 +142,8 @@ contract LocationToken {
 
     function registerTraveller(
         string memory travellerId,
-        bytes memory travellerPubKey) travellerOk(travellerId) external payable {
+        bytes memory travellerPubKey,
+        bytes memory travellerChecksum) travellerOk(travellerId) external payable {
         require(msg.value >= challengerRegistrationFee, "Insufficient fee to register the traveller");
 
         uint256 internalId = toInternalId(travellerId);
@@ -149,8 +152,8 @@ contract LocationToken {
 
         travellers[internalId] = Traveller(
             travellerId,
-            msg.sender,
             travellerPubKey,
+            travellerChecksum,
             false,
             true);
     }
@@ -169,25 +172,38 @@ contract LocationToken {
 
         // checking the challenger has confirmed the data
         uint256 challenger_internal_id = toInternalId(challengerId);
-        bytes memory challenger_pub_key = challengers[challenger_internal_id].pubKey;
+
+        bytes memory challenger_checksum = challengers[challenger_internal_id].checksum;
         bytes32 proof_data = keccak256(abi.encodePacked(c_signature, t_signature));
 
-        require(verifySignature(proof_data, proof, challenger_pub_key),
-            "Challenger signature does not match.");
+        bytes memory recoveredChallenger = recoverSigner(proof_data, proof);
+        require(equalBytes(recoveredChallenger, challenger_checksum),
+            string.concat(
+                "Challenger signature does not match - recovered: ",
+                iToHex(recoveredChallenger),
+                ", expected: ", iToHex(challenger_checksum))
+        );
 
         // checking the traveller also confirmed the data
         uint256 traveller_internal_id = toInternalId(travellerId);
-        bytes memory traveller_pub_key = travellers[traveller_internal_id].pubKey;
+
+        bytes memory traveller_checksum = travellers[traveller_internal_id].checksum;
         bytes32 t_data = keccak256(abi.encodePacked(c_signature));
 
-        require(verifySignature(t_data, t_signature, traveller_pub_key),
-            "Traveller signature does not match.");
+        bytes memory recoveredTraveller = recoverSigner(t_data, t_signature);
+        require(equalBytes(recoveredTraveller, traveller_checksum),
+            string.concat(
+                "Traveller signature does not match - recovered: ",
+                iToHex(recoveredTraveller),
+                ", expected: ", iToHex(traveller_checksum))
+        );
 
         rewardsByChallenger[challenger_internal_id] += proofOfLocationRegistrationFee;
         totalRewards += proofOfLocationRegistrationFee;
 
         uint256 proofFastId = uint256(keccak256(proof));
         proofs[proofFastId] = ProofOfLocation(
+            proofFastId,
             travellerId,
             challengerId,
             nonce_c,
@@ -201,27 +217,43 @@ contract LocationToken {
         emit ProofOfLocationSubmitted(travellerId, challengerId, proofFastId);
     }
 
-    function verifySignature(
+    function equalBytes(bytes memory a, bytes memory b) public pure returns (bool) {
+        return keccak256(a) == keccak256(b);
+    }
+
+    function recoverSigner(
         bytes32 messageHash,
-        bytes memory signature,
-        bytes memory publicKey
-    ) public pure returns (bool) {
+        bytes memory signature
+    ) public pure returns (bytes memory) {
         require(signature.length == 65, "Invalid signature length");
 
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
+        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
+
+        (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+
+        return abi.encodePacked(ecrecover(ethSignedMessageHash, v, r, s));
+    }
+
+    function getEthSignedMessageHash(bytes32 messageHash) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
+    }
+
+    function splitSignature(bytes memory sig)
+    internal
+    pure
+    returns (bytes32 r, bytes32 s, uint8 v)
+    {
+        require(sig.length == 65, "invalid signature length");
 
         assembly {
-            r := mload(add(signature, 32))
-            s := mload(add(signature, 64))
-            v := byte(0, mload(add(signature, 96)))
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+            v := byte(0, mload(add(sig, 96)))
         }
 
-        address recoveredAddress = ecrecover(messageHash, v, r, s);
-        address publicKeyAddress = address(uint160(uint256(keccak256(publicKey))));
-
-        return recoveredAddress == publicKeyAddress;
+        if (v < 27) {
+            v += 27;
+        }
     }
 
     function getTravellerPubKey(string memory travellerId) travellerExists(travellerId) travellerOk(travellerId)
@@ -269,5 +301,17 @@ contract LocationToken {
 
     function toInternalId(string memory id) public pure returns (uint256) {
         return uint256(keccak256(bytes(id)));
+    }
+
+    function iToHex(bytes memory buffer) public pure returns (string memory) {
+        bytes memory converted = new bytes(buffer.length * 2);
+        bytes memory _base = "0123456789abcdef";
+
+        for (uint256 i = 0; i < buffer.length; i++) {
+            converted[i * 2] = _base[uint8(buffer[i]) / _base.length];
+            converted[i * 2 + 1] = _base[uint8(buffer[i]) % _base.length];
+        }
+
+        return string(abi.encodePacked("0x", converted));
     }
 }
