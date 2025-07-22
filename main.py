@@ -15,7 +15,7 @@ load_dotenv()
 conf = dotenv_values()
 
 # Dependencies
-register = LocationTokenRegister()
+register = LocationTokenRegister(conf['DAO_ADDRESS'], "contract/LocationToken.abi.json", conf['NODE_ADDRESS'])
 keys_holder = KeysHolder(conf['CHALLENGER_PUB_KEY'], conf['CHALLENGER_PRIV_KEY'])
 challenger = Challenger(register, keys_holder)
 

@@ -5,8 +5,9 @@ import requests
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from proof.challenger import Challenge, ChallengeInput, ChallengeSolution, ProofOfLocation
+from proof.challenger import Challenge, ChallengeInput, ChallengeSolution
 from proof.hashes import hash_pub_key, hash_challenge_input_data, hash_c_signature
+from proof.proof import ProofOfLocation
 
 
 class TravellerKeys:

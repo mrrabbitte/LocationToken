@@ -10,6 +10,7 @@ from result import Result, Err, Ok
 from contract.register import LocationTokenRegister
 from proof.hashes import hash_challenge_input_data, hash_challenge, hash_pub_key, hash_c_signature, hash_signatures
 from proof.keys import KeysHolder
+from proof.proof import ProofOfLocation
 
 
 @dataclass
@@ -43,18 +44,6 @@ class ChallengeSolution:
     # t_signature = sign_t(hash(c_signature)) - this is the solution proving that the private key is in
     # custody of the traveller
     t_signature: str
-
-
-@dataclass
-class ProofOfLocation:
-    traveller_id: str
-    challenger_id: str
-    nonce_c: str
-    created_at: int
-    ttl: int
-    c_signature: str
-    t_signature: str
-    proof: str
 
 
 class Challenger:

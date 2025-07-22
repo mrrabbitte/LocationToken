@@ -2,15 +2,16 @@ import json
 
 from cryptography.hazmat.primitives import serialization
 from result import Result, Ok
-from web3.auto import w3
-from web3.types import TxParams
+from web3 import Web3
 
-from proof.challenger import ProofOfLocation
+from proof.proof import ProofOfLocation
 
 
 class LocationTokenRegister:
 
-    def __init__(self, dao_address: str, abi_path: str):
+    def __init__(self, dao_address: str, abi_path: str, node_addr: str):
+        w3 = Web3(Web3.HTTPProvider(node_addr))
+        w3.eth.defaultAccount = w3.eth.accounts
         with open(abi_path) as f:
             abi = json.load(f)
         self.contract = w3.eth.contract(address=dao_address, abi=abi)
@@ -29,7 +30,7 @@ class LocationTokenRegister:
             format=serialization.PublicFormat.SubjectPublicKeyInfo).decode()
         return Ok(pub_key)
 
-    def register_proof_of_location(self, proof: ProofOfLocation, tx: TxParams):
+    def register_proof_of_location(self, proof: ProofOfLocation, tx: dict):
         response = self.contract.functions.registerLocationProof(
             travellerId=proof.traveller_id,
             challengerId=proof.challenger_id,

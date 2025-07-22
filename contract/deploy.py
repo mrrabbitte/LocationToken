@@ -137,7 +137,9 @@ Su29O/ocBD8iYGFZwnpIBc1yJA19O6eyNp/BzyYhsRvDLceW8HMW3g==
     print("[✓] Saved contract ABI.")
 
     print("Performing checks...")
-    register = LocationTokenRegister(contract.address, "LocationToken.abi.json")
+    register = LocationTokenRegister(contract.address,
+                                     "LocationToken.abi.json",
+                                     "http://127.0.0.1:8545")
 
     read_traveller_pub_key_pem = register.get_traveller_pub_key(traveller_id).unwrap()
     assert (read_traveller_pub_key_pem.replace("\n", "")
