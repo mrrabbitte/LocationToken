@@ -15,7 +15,7 @@ contract LocationToken {
     struct Challenger {
         string id;
         address challengerAddress;
-        string pubKey;
+        bytes pubKey;
         string wifiNetwork;
         Location location;
         bool isBlocklisted;
@@ -24,7 +24,7 @@ contract LocationToken {
     struct Traveller {
         string id;
         address travellerAddress;
-        string pubKey;
+        bytes pubKey;
         bool isBlocklisted;
     }
 
@@ -54,14 +54,14 @@ contract LocationToken {
     // Dao core business value
     mapping(uint256 => Challenger) public challengers;
     mapping(uint256 => Traveller) public travellers;
-    mapping(uint256 => LocationProof) public locationProofs;
+    mapping(uint256 => ProofOfLocation) public proofs;
     mapping(string => Challenger) public wifiNameToChallenger;
 
     // Events
     event ProofOfLocationSubmitted(
-        uint256 travellerId,
-        uint256 challengerId,
-        uint256 locationProofId
+        string indexed travellerId,
+        string indexed challengerId,
+        string indexed proofOfLocationId
     );
     event ChallengerRegistered(string indexed challengerId, Location location, string wifiNetwork);
     event TravellerBlocklisted(string indexed travellerId);
@@ -92,7 +92,7 @@ contract LocationToken {
     }
 
     function registerChallenger(
-        string memory challengerPubKey,
+        bytes memory challengerPubKey,
         string memory challengerId,
         string memory wifiNetwork,
         uint32 scale,
@@ -113,6 +113,7 @@ contract LocationToken {
             wifiNetwork,
             location,
             false);
+        rewardsByChallenger[internalId] = 0;
 
         emit ChallengerRegistered(msg.sender, location, wifiNetwork);
     }
@@ -120,7 +121,7 @@ contract LocationToken {
 
     function registerTraveller(
         string memory travellerId,
-        string memory travellerPubKey) travellerOk(travellerId) external payable {
+        bytes memory travellerPubKey) travellerOk(travellerId) external payable {
         require(msg.value >= challengerRegistrationFee, "Insufficient fee to register the traveller");
 
         uint256 memory internalId = toInternalId(travellerId);
@@ -140,29 +141,72 @@ contract LocationToken {
         string memory nonce_c,
         uint64 memory created_at,
         uint64 memory ttl,
-        string memory c_signature,
-        string memory t_signature,
-        string memory proof) challengerOk(challengerId) travellerOk(travellerId) external payable {
-        // Remember to change to using to sha256
-        ProofOfLocation memory pol =
-                        ProofOfLocation(
-                travellerId,
-                challengerId,
-                nonce_c,
-                created_at,
-                ttl,
-                c_signature,
-                t_signature,
-                proof);
+        bytes memory c_signature,
+        bytes memory t_signature,
+        bytes memory proof) challengerOk(challengerId) travellerOk(travellerId) external payable {
+        require(msg.value >= proofOfLocationRegistrationFee, "Insufficient fee to register the PoL");
+
+        // checking the challenger has confirmed the data
+        uint256 memory challenger_internal_id = toInternalId(challengerId);
+        bytes memory challenger_pub_key = challengers[challenger_internal_id].pubKey;
+        bytes memory proof_data = keccak256(abi.encodePacked(c_signature, t_signature));
+
+        require(verifySignature(proof_data, proof, challenger_pub_key),
+            "Challenger signature does not match.");
+
+        // checking the traveller also confirmed the data
+        bytes memory traveller_pub_key = travellers[toInternalId(travellerId)].pubKey;
+        bytes memory t_data = keccak256(abi.encodePacked(c_signature));
+
+        require(verifySignature(t_data, t_signature, traveller_pub_key),
+            "Traveller signature does not match.");
+
+        rewardsByChallenger[challenger_internal_id] += proofOfLocationRegistrationFee;
+        totalRewards += proofOfLocationRegistrationFee;
+
+        proofs[toInternalId(proof)] = ProofOfLocation(
+            travellerId,
+            challengerId,
+            nonce_c,
+            created_at,
+            ttl,
+            c_signature,
+            t_signature,
+            proof);
+
+        emit ProofOfLocationSubmitted(travellerId, challengerId, proof);
+    }
+
+    function verifySignature(
+        bytes32 messageHash,
+        bytes memory signature,
+        bytes memory publicKey
+    ) public pure returns (bool) {
+        require(signature.length == 65, "Invalid signature length");
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+
+        assembly {
+            r := mload(add(signature, 32))
+            s := mload(add(signature, 64))
+            v := byte(0, mload(add(signature, 96)))
+        }
+
+        address recoveredAddress = ecrecover(messageHash, v, r, s);
+        address publicKeyAddress = address(uint160(uint256(keccak256(publicKey))));
+
+        return recoveredAddress == publicKeyAddress;
     }
 
     function getTravellerPubKey(string memory travellerId) external view returns (string memory) {
         return travellers[toInternalId(travellerId)].pubKey;
     }
 
-    function getLocationProof(string memory proof)
+    function getProofOfLocation(string memory proof)
     external view returns (ProofOfLocation memory) {
-        return locationProofs[toInternalId(proof)];
+        return proof[toInternalId(proof)];
     }
 
     function blocklistTraveller(string memory travellerId) external onlyOwner {
