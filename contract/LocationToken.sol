@@ -3,14 +3,14 @@ pragma solidity ^0.8.0;
 
 contract LocationToken {
 
-    // both latitude and longitude has to be saved in the same scale
-    // to get the real value, you need to divide by the scale, i.e.
-    // a) real_lat = lat / scale
-    // b) real_lon = lon / scale
+    // both latitude and longitude have scale parameter
+    // a) real_lat = lat / scale_lat
+    // b) real_lon = lon / scale_lon
     struct Location {
-        uint32 scale;
-        uint64 lat; // whole number of the real latitude * scale
-        uint64 lon; // whole number of the real longitude * scale
+        uint32 scale_lat;
+        uint64 lat; // whole number of the real latitude * scale_lat
+        uint32 scale_lon;
+        uint64 lon; // whole number of the real longitude * scale_lon
     }
 
     struct Challenger {
@@ -82,11 +82,24 @@ contract LocationToken {
         _;
     }
 
+    modifier travellerExists(string memory travellerId) {
+        uint256 internalId = toInternalId(travellerId);
+        require(travellers[internalId].exists, "Traveller does not exist");
+        _;
+    }
+
     modifier challengerOk(string memory challengerId) {
         uint256 internalId = toInternalId(challengerId);
         require(!challengers[internalId].isBlocklisted, "You are blocklisted");
         _;
     }
+
+    modifier challengerExists(string memory challengerId) {
+        uint256 internalId = toInternalId(challengerId);
+        require(challengers[internalId].exists, "Challenger does not exist");
+        _;
+    }
+
 
     constructor() {
         owner = msg.sender;
@@ -99,8 +112,9 @@ contract LocationToken {
         bytes memory challengerPubKey,
         string memory challengerId,
         string memory wifiNetwork,
-        uint32 scale,
+        uint32 scaleLat,
         uint64 lat,
+        uint32 scaleLon,
         uint64 lon) challengerOk(challengerId) external payable {
         require(msg.value >= challengerRegistrationFee, "Insufficient fee to register the challenger");
 
@@ -108,7 +122,7 @@ contract LocationToken {
 
         require(!challengers[internalId].exists, "Challenger is already registered.");
 
-        Location memory location = Location(scale, lat, lon);
+        Location memory location = Location(scaleLat, lat, scaleLon, lon);
 
         challengers[internalId] = Challenger(
             challengerId,
@@ -149,7 +163,8 @@ contract LocationToken {
         uint64 ttl,
         bytes memory c_signature,
         bytes memory t_signature,
-        bytes memory proof) challengerOk(challengerId) travellerOk(travellerId) external payable {
+        bytes memory proof) challengerExists(challengerId)
+    challengerOk(challengerId) travellerExists(travellerId) travellerOk(travellerId) external payable {
         require(msg.value >= proofOfLocationRegistrationFee, "Insufficient fee to register the PoL");
 
         // checking the challenger has confirmed the data
@@ -209,8 +224,16 @@ contract LocationToken {
         return recoveredAddress == publicKeyAddress;
     }
 
-    function getTravellerPubKey(string memory travellerId) external returns (bytes memory) {
-        return travellers[toInternalId(travellerId)].pubKey;
+    function getTravellerPubKey(string memory travellerId) travellerExists(travellerId) travellerOk(travellerId)
+    public view returns (bytes memory) {
+        uint256 id = toInternalId(travellerId);
+        return travellers[id].pubKey;
+    }
+
+    function getChallengerPubKey(string memory challengerId) challengerExists(challengerId) challengerOk(challengerId)
+    public view returns (bytes memory) {
+        uint256 id = toInternalId(challengerId);
+        return challengers[id].pubKey;
     }
 
     function getProofOfLocation(string memory proof)
@@ -244,7 +267,7 @@ contract LocationToken {
         payable(owner).transfer(address(this).balance);
     }
 
-    function toInternalId(string memory id) public returns (uint256) {
+    function toInternalId(string memory id) public pure returns (uint256) {
         return uint256(keccak256(bytes(id)));
     }
 }
