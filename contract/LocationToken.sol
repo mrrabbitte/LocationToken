@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
 contract LocationToken {
@@ -19,6 +20,7 @@ contract LocationToken {
         string wifiNetwork;
         Location location;
         bool isBlocklisted;
+        bool exists;
     }
 
     struct Traveller {
@@ -26,6 +28,7 @@ contract LocationToken {
         address travellerAddress;
         bytes pubKey;
         bool isBlocklisted;
+        bool exists;
     }
 
     struct ProofOfLocation {
@@ -34,9 +37,10 @@ contract LocationToken {
         string nonce_c;
         uint64 created_at;
         uint64 ttl;
-        string c_signature;
-        string t_signature;
-        string proof;
+        bytes c_signature;
+        bytes t_signature;
+        bytes proof;
+        bool exists;
     }
 
     address public owner;
@@ -61,7 +65,7 @@ contract LocationToken {
     event ProofOfLocationSubmitted(
         string indexed travellerId,
         string indexed challengerId,
-        string indexed proofOfLocationId
+        uint256 indexed proofId
     );
     event ChallengerRegistered(string indexed challengerId, Location location, string wifiNetwork);
     event TravellerBlocklisted(string indexed travellerId);
@@ -72,14 +76,14 @@ contract LocationToken {
         _;
     }
 
-    modifier travellerOk(string travellerId) {
+    modifier travellerOk(string memory travellerId) {
         uint256 internalId = toInternalId(travellerId);
         require(!travellers[internalId].isBlocklisted, "You are blocklisted");
         _;
     }
 
-    modifier challengerOk(string challengerId) {
-        uint256 memory internalId = toInternalId(challengerId);
+    modifier challengerOk(string memory challengerId) {
+        uint256 internalId = toInternalId(challengerId);
         require(!challengers[internalId].isBlocklisted, "You are blocklisted");
         _;
     }
@@ -100,9 +104,9 @@ contract LocationToken {
         uint64 lon) challengerOk(challengerId) external payable {
         require(msg.value >= challengerRegistrationFee, "Insufficient fee to register the challenger");
 
-        uint256 memory internalId = toInternalId(challengerId);
+        uint256 internalId = toInternalId(challengerId);
 
-        require(!challengers[internalId], "Challenger is already registered.");
+        require(!challengers[internalId].exists, "Challenger is already registered.");
 
         Location memory location = Location(scale, lat, lon);
 
@@ -112,10 +116,11 @@ contract LocationToken {
             challengerPubKey,
             wifiNetwork,
             location,
-            false);
+            false,
+            true);
         rewardsByChallenger[internalId] = 0;
 
-        emit ChallengerRegistered(msg.sender, location, wifiNetwork);
+        emit ChallengerRegistered(challengerId, location, wifiNetwork);
     }
 
 
@@ -124,39 +129,41 @@ contract LocationToken {
         bytes memory travellerPubKey) travellerOk(travellerId) external payable {
         require(msg.value >= challengerRegistrationFee, "Insufficient fee to register the traveller");
 
-        uint256 memory internalId = toInternalId(travellerId);
+        uint256 internalId = toInternalId(travellerId);
 
-        require(!travellers[internalId], "Traveller is already registered.");
+        require(!travellers[internalId].exists, "Traveller is already registered.");
 
         travellers[internalId] = Traveller(
             travellerId,
             msg.sender,
             travellerPubKey,
-            false);
+            false,
+            true);
     }
 
     function registerLocationProof(
         string memory travellerId,
         string memory challengerId,
         string memory nonce_c,
-        uint64 memory created_at,
-        uint64 memory ttl,
+        uint64 created_at,
+        uint64 ttl,
         bytes memory c_signature,
         bytes memory t_signature,
         bytes memory proof) challengerOk(challengerId) travellerOk(travellerId) external payable {
         require(msg.value >= proofOfLocationRegistrationFee, "Insufficient fee to register the PoL");
 
         // checking the challenger has confirmed the data
-        uint256 memory challenger_internal_id = toInternalId(challengerId);
+        uint256 challenger_internal_id = toInternalId(challengerId);
         bytes memory challenger_pub_key = challengers[challenger_internal_id].pubKey;
-        bytes memory proof_data = keccak256(abi.encodePacked(c_signature, t_signature));
+        bytes32 proof_data = keccak256(abi.encodePacked(c_signature, t_signature));
 
         require(verifySignature(proof_data, proof, challenger_pub_key),
             "Challenger signature does not match.");
 
         // checking the traveller also confirmed the data
-        bytes memory traveller_pub_key = travellers[toInternalId(travellerId)].pubKey;
-        bytes memory t_data = keccak256(abi.encodePacked(c_signature));
+        uint256 traveller_internal_id = toInternalId(travellerId);
+        bytes memory traveller_pub_key = travellers[traveller_internal_id].pubKey;
+        bytes32 t_data = keccak256(abi.encodePacked(c_signature));
 
         require(verifySignature(t_data, t_signature, traveller_pub_key),
             "Traveller signature does not match.");
@@ -164,7 +171,8 @@ contract LocationToken {
         rewardsByChallenger[challenger_internal_id] += proofOfLocationRegistrationFee;
         totalRewards += proofOfLocationRegistrationFee;
 
-        proofs[toInternalId(proof)] = ProofOfLocation(
+        uint256 proofFastId = uint256(keccak256(proof));
+        proofs[proofFastId] = ProofOfLocation(
             travellerId,
             challengerId,
             nonce_c,
@@ -172,9 +180,10 @@ contract LocationToken {
             ttl,
             c_signature,
             t_signature,
-            proof);
+            proof,
+            true);
 
-        emit ProofOfLocationSubmitted(travellerId, challengerId, proof);
+        emit ProofOfLocationSubmitted(travellerId, challengerId, proofFastId);
     }
 
     function verifySignature(
@@ -200,33 +209,33 @@ contract LocationToken {
         return recoveredAddress == publicKeyAddress;
     }
 
-    function getTravellerPubKey(string memory travellerId) external view returns (string memory) {
+    function getTravellerPubKey(string memory travellerId) external returns (bytes memory) {
         return travellers[toInternalId(travellerId)].pubKey;
     }
 
     function getProofOfLocation(string memory proof)
-    external view returns (ProofOfLocation memory) {
-        return proof[toInternalId(proof)];
+    external returns (ProofOfLocation memory) {
+        return proofs[toInternalId(proof)];
     }
 
     function blocklistTraveller(string memory travellerId) external onlyOwner {
-        uint256 internalId = internalId(travellerId);
+        uint256 internalId = toInternalId(travellerId);
         travellers[internalId].isBlocklisted = true;
         emit TravellerBlocklisted(travellerId);
     }
 
 
     function blocklistChallenger(string memory challengerId) external onlyOwner {
-        uint256 internalId = internalId(challengerId);
+        uint256 internalId = toInternalId(challengerId);
         challengers[internalId].isBlocklisted = true;
         emit ChallengerBlocklisted(challengerId);
     }
 
-    function setChallengerRegistrationFee(uint256 newRegistrationFee) external onlyOwner {
+    function setChallengerRegistrationFee(uint128 newRegistrationFee) external onlyOwner {
         challengerRegistrationFee = newRegistrationFee;
     }
 
-    function setTravellerRegistrationFee(uint256 newRegistrationFee) external onlyOwner {
+    function setTravellerRegistrationFee(uint128 newRegistrationFee) external onlyOwner {
         travellerRegistrationFee = newRegistrationFee;
     }
 
@@ -235,7 +244,7 @@ contract LocationToken {
         payable(owner).transfer(address(this).balance);
     }
 
-    function toInternalId(string memory id) returns (uint256) {
+    function toInternalId(string memory id) public returns (uint256) {
         return uint256(keccak256(bytes(id)));
     }
 }
