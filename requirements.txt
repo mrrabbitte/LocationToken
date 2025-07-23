@@ -1,0 +1,9 @@
+eth-keys~=0.7.0
+pycryptodome~=3.23.0
+eth-account~=0.13.7
+result~=0.17.0
+requests~=2.32.4
+python-dotenv~=1.1.1
+web3~=7.12.1
+Flask~=3.1.1
+cryptography~=45.0.5
