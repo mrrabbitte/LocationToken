@@ -110,6 +110,7 @@ if __name__ == "__main__":
     lon = 62674862
 
     contract.functions.registerChallenger(challengerId=challenger_id,
+                                          rewardsAddr=challenger_addr,
                                           challengerPubKey=challenger_pub_key.to_bytes(),
                                           challengerChecksum=from_hex(challenger_checksum),
                                           wifiNetwork=wifi_network,

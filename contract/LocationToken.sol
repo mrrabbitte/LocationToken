@@ -15,6 +15,7 @@ contract LocationToken {
 
     struct Challenger {
         string id;
+        address rewardsAddr;
         bytes pubKey;
         bytes checksum;
         string wifiNetwork;
@@ -111,6 +112,7 @@ contract LocationToken {
 
     function registerChallenger(
         string memory challengerId,
+        address rewardsAddr,
         bytes memory challengerPubKey,
         bytes memory challengerChecksum,
         string memory wifiNetwork,
@@ -128,6 +130,7 @@ contract LocationToken {
 
         challengers[internalId] = Challenger(
             challengerId,
+            rewardsAddr,
             challengerPubKey,
             challengerChecksum,
             wifiNetwork,
