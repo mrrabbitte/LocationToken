@@ -46,9 +46,12 @@ def send_solution(solution: ChallengeSolution) -> ProofOfLocation:
 
 
 def solve(traveller_keys: TravellerKeys, challenge: Challenge) -> ChallengeSolution:
+    t_hash = hash_c_signature(challenge.c_signature)
+    t_eth_prefixed = encode_defunct(t_hash)
+
     t_signature = Account.sign_message(
-        encode_defunct(
-            hash_c_signature(challenge.c_signature)), private_key=traveller_keys.priv_key.to_hex()).signature.hex()
+        t_eth_prefixed, private_key=traveller_keys.priv_key.to_hex())
+
     return ChallengeSolution(
         challenge.traveller_id,
         challenge.challenger_id,
@@ -56,7 +59,7 @@ def solve(traveller_keys: TravellerKeys, challenge: Challenge) -> ChallengeSolut
         challenge.created_at,
         challenge.ttl,
         challenge.c_signature,
-        t_signature)
+        t_signature.signature.hex())
 
 
 def __generate_nonce() -> str:

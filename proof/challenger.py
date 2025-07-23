@@ -49,7 +49,7 @@ class ChallengeSolution:
 
 class Challenger:
 
-    def __init__(self, register: LocationTokenRegister, keys_holder: KeysHolder, nonce_length=256, ttl=50):
+    def __init__(self, register: LocationTokenRegister, keys_holder: KeysHolder, nonce_length=256, ttl=20):
         self.register = register
         self.keys_holder = keys_holder
         self.challenger_id = hash_pub_key(keys_holder.pub_key_raw)

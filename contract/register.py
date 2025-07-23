@@ -38,4 +38,3 @@ class LocationTokenRegister:
             t_signature=from_hex(proof.t_signature),
             proof=from_hex(proof.proof)
         ).transact(tx)
-        print(response)

@@ -158,6 +158,8 @@ contract LocationToken {
             true);
     }
 
+    event DebugBytes32(string label, bytes32 value);
+
     function registerLocationProof(
         string memory travellerId,
         string memory challengerId,
@@ -170,33 +172,23 @@ contract LocationToken {
     challengerOk(challengerId) travellerExists(travellerId) travellerOk(travellerId) external payable {
         require(msg.value >= proofOfLocationRegistrationFee, "Insufficient fee to register the PoL");
 
-        // checking the challenger has confirmed the data
-        uint256 challenger_internal_id = toInternalId(challengerId);
-
-        bytes memory challenger_checksum = challengers[challenger_internal_id].checksum;
-        bytes32 proof_data = keccak256(abi.encodePacked(c_signature, t_signature));
-
-        bytes memory recoveredChallenger = recoverSigner(proof_data, proof);
-        require(equalBytes(recoveredChallenger, challenger_checksum),
-            string.concat(
-                "Challenger signature does not match - recovered: ",
-                iToHex(recoveredChallenger),
-                ", expected: ", iToHex(challenger_checksum))
-        );
-
-        // checking the traveller also confirmed the data
+        // checking the traveller confirmed the data
         uint256 traveller_internal_id = toInternalId(travellerId);
 
         bytes memory traveller_checksum = travellers[traveller_internal_id].checksum;
         bytes32 t_data = keccak256(abi.encodePacked(c_signature));
 
-        bytes memory recoveredTraveller = recoverSigner(t_data, t_signature);
-        require(equalBytes(recoveredTraveller, traveller_checksum),
-            string.concat(
-                "Traveller signature does not match - recovered: ",
-                iToHex(recoveredTraveller),
-                ", expected: ", iToHex(traveller_checksum))
-        );
+        verifySigner(t_data, t_signature, traveller_checksum,
+            "Traveller signature does not match");
+
+        // checking the challenger confirmed the data
+        uint256 challenger_internal_id = toInternalId(challengerId);
+
+        bytes memory challenger_checksum = challengers[challenger_internal_id].checksum;
+        bytes32 proof_data = keccak256(abi.encodePacked(c_signature, t_signature));
+
+        verifySigner(proof_data, proof, challenger_checksum,
+            "Challenger signature does not match");
 
         rewardsByChallenger[challenger_internal_id] += proofOfLocationRegistrationFee;
         totalRewards += proofOfLocationRegistrationFee;
@@ -221,18 +213,59 @@ contract LocationToken {
         return keccak256(a) == keccak256(b);
     }
 
-    function recoverSigner(
-        bytes32 messageHash,
-        bytes memory signature
-    ) public pure returns (bytes memory) {
+    function verifySigner(
+        bytes32 dataHash,
+        bytes memory signature,
+        bytes memory expected_address,
+        string memory messageOnError
+    ) public pure {
         require(signature.length == 65, "Invalid signature length");
 
-        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
+        bytes32 ethSignedDataHash = getEthSignedMessageHash(dataHash); // message hash is good
 
-        (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature);
+        (bytes32 r, bytes32 s, uint8 v) = splitSignature(signature); // this is good.
 
-        return abi.encodePacked(ecrecover(ethSignedMessageHash, v, r, s));
+        address recovered = ecrecover(ethSignedDataHash, v, r, s);
+
+        // This is a quick fix to make it work, should be optimised
+        string memory rec_str = removeFirstTwoChars(addrToString(recovered));
+        string memory exp_str = removeFirstTwoChars(iToHex(expected_address));
+
+        require(compareStrings(rec_str, exp_str), messageOnError);
     }
+
+    function compareStrings(string memory a, string memory b) public pure returns (bool) {
+        return keccak256(bytes(a)) == keccak256(bytes(b));
+    }
+
+    function removeFirstTwoChars(string memory str) public pure returns (string memory) {
+        bytes memory strBytes = bytes(str);
+        require(strBytes.length > 2, "String too short");
+
+        bytes memory result = new bytes(strBytes.length - 2);
+        for (uint i = 2; i < strBytes.length; i++) {
+            result[i - 2] = strBytes[i];
+        }
+
+        return string(result);
+    }
+
+    function addrToString(address account) internal pure returns (string memory) {
+        return toHexString(uint160(account), 20);
+    }
+
+    function toHexString(uint256 value, uint256 length) internal pure returns (string memory) {
+        bytes memory buffer = new bytes(2 + length * 2);
+        buffer[0] = "0";
+        buffer[1] = "x";
+        for (uint256 i = 2 + length * 2; i > 1; --i) {
+            buffer[i - 1] = _HEX_SYMBOLS[value & 0xf];
+            value >>= 4;
+        }
+        return string(buffer);
+    }
+
+    bytes16 private constant _HEX_SYMBOLS = "0123456789abcdef";
 
     function getEthSignedMessageHash(bytes32 messageHash) internal pure returns (bytes32) {
         return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", messageHash));
@@ -303,6 +336,18 @@ contract LocationToken {
         return uint256(keccak256(bytes(id)));
     }
 
+    function iToHex32(bytes32 buffer) public pure returns (string memory) {
+        bytes memory converted = new bytes(64);
+        bytes memory _base = "0123456789abcdef";
+
+        for (uint256 i = 0; i < buffer.length; i++) {
+            converted[i * 2] = _base[uint8(buffer[i]) / _base.length];
+            converted[i * 2 + 1] = _base[uint8(buffer[i]) % _base.length];
+        }
+
+        return string(abi.encodePacked("0x", converted));
+    }
+
     function iToHex(bytes memory buffer) public pure returns (string memory) {
         bytes memory converted = new bytes(buffer.length * 2);
         bytes memory _base = "0123456789abcdef";
@@ -313,5 +358,44 @@ contract LocationToken {
         }
 
         return string(abi.encodePacked("0x", converted));
+    }
+
+    function uint2str(uint256 _i) internal pure returns (string memory str) {
+        if (_i == 0) {
+            return "0";
+        }
+        uint256 j = _i;
+        uint256 length;
+        while (j != 0) {
+            length++;
+            j /= 10;
+        }
+        bytes memory bstr = new bytes(length);
+        uint256 k = length;
+        j = _i;
+        while (j != 0) {
+            bstr[--k] = bytes1(uint8(48 + j % 10));
+            j /= 10;
+        }
+        str = string(bstr);
+    }
+
+    function uint8ToString(uint8 _i) internal pure returns (string memory) {
+        if (_i == 0) {
+            return "0";
+        }
+        uint256 temp = _i;
+        uint256 length;
+        while (temp != 0) {
+            length++;
+            temp /= 10;
+        }
+        bytes memory buffer = new bytes(length);
+        while (_i != 0) {
+            length--;
+            buffer[length] = bytes1(uint8(48 + (_i % 10)));
+            _i /= 10;
+        }
+        return string(buffer);
     }
 }
